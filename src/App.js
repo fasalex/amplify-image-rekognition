@@ -1,12 +1,12 @@
 import React, {useState, useEffect} from 'react';
 
-import Amplify, {Auth} from 'aws-amplify'
 import API, {graphqlOperation} from '@aws-amplify/api'
 import Storage from '@aws-amplify/storage'
 import aws_exports from './aws-exports'
 
 import {S3Image, withAuthenticator} from 'aws-amplify-react'
 import {Divider, Form, Grid, Header, Input, List, Segment} from 'semantic-ui-react'
+import Amplify, { Analytics, API, Auth, graphqlOperation, Storage } from 'aws-amplify';
 
 import {BrowserRouter as Router, Route, NavLink} from 'react-router-dom';
 
@@ -41,6 +41,40 @@ function makeComparator(key, order = 'asc') {
       : comparison
   };
 }
+
+Analytics.autoTrack('session', {
+  enable: true,
+  provider: 'AWSPinpoint'
+});
+
+Analytics.autoTrack('pageView', {
+  enable: true,
+  eventName: 'pageView',
+  type: 'SPA',
+  provider: 'AWSPinpoint',
+  getUrl: () => {
+      return window.location.origin + window.location.pathname;
+  }
+});
+
+const mappedobjects = f => obj =>
+  Object.keys(obj).reduce((acc, key) => ({ ...acc, [key]: f(obj[key]) }), {});
+const Arrayofourstrings = value => [`${value}`];
+const mapArrayofourstrings = mappedobjects(Arrayofourstrings);
+
+async function trackUserIdforPinpoint() {
+    const { attributes } = await Auth.currentAuthenticatedUser();
+    const userAttributes = mapArrayofourstrings(attributes);
+    Analytics.updateEndpoint({
+      address: attributes.email,      
+      channelType: 'EMAIL',      
+      optOut: 'NONE',      
+      userId: attributes.sub,      
+      userAttributes,    
+    });
+  } 
+
+trackUserIdforPinpoint();
 
 const NewAlbum = () => {
   const [name,
@@ -204,8 +238,8 @@ const S3ImageUpload = (props) => {
       fileName, 
       file, 
       {
-        metadata: {
-          albumid: props.albumId,
+        metadata: { 
+          albumid: props.albumId, 
           owner: user.username,
         }
       }
@@ -267,6 +301,49 @@ const PhotosList = React.memo((props) => {
 })
 
 
+const Search = () => {
+  const [photos, setPhotos] = useState([])
+  const [label, setLabel] = useState('')
+  const [hasResults, setHasResults] = useState(false)
+  const [searched, setSearched] = useState(false)
+
+  const getPhotosForLabel = async (e) => {
+      setPhotos([])
+      const result = await API.graphql(graphqlOperation(queries.searchPhotos, { filter: { labels: { match: label }} }));
+      if (result.data.searchPhotos.items.length !== 0) {
+          setHasResults(result.data.searchPhotos.items.length > 0)
+          setPhotos(p => p.concat(result.data.searchPhotos.items))
+      }
+      setSearched(true)
+  }
+
+  const NoResults = () => {
+    return !searched
+      ? ''
+      : <Header as='h4' color='grey'>No photos found matching '{label}'</Header>
+  }
+
+  return (
+      <Segment>
+        <Input
+          type='text'
+          placeholder='Search for photos'
+          icon='search'
+          iconPosition='left'
+          action={{ content: 'Search', onClick: getPhotosForLabel }}
+          name='label'
+          value={label}
+          onChange={(e) => { setLabel(e.target.value); setSearched(false);} }
+        />
+        {
+            hasResults
+            ? <PhotosList photos={photos} />
+            : <NoResults />
+        }
+      </Segment>
+  );
+}
+
 function App() {
   return (
     <Router>
@@ -274,6 +351,7 @@ function App() {
         <Grid.Column>
           <Route path="/" exact component={NewAlbum}/>
           <Route path="/" exact component={AlbumsList}/>
+          <Route path="/" exact component={Search}/>
 
           <Route
             path="/albums/:albumId"
